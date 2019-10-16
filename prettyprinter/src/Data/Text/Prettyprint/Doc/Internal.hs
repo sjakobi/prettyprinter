@@ -58,6 +58,10 @@ import Data.Functor.Identity
 
 import Data.Text.Prettyprint.Doc.Render.Util.Panic
 
+import Debug.Trace
+import Unsafe.Coerce
+import Text.Show.Functions
+
 
 
 -- | The abstract data type @'Doc' ann@ represents pretty documents that have
@@ -132,7 +136,7 @@ data Doc ann =
     -- | Add an annotation to the enclosed 'Doc'. Can be used for example to add
     -- styling directives or alt texts that can then be used by the renderer.
     | Annotated ann (Doc ann)
-    deriving (Generic, Typeable)
+    deriving (Generic, Typeable, Show)
 
 -- |
 -- @
@@ -1589,7 +1593,7 @@ data LayoutPipeline ann =
       Nil
     | Cons !Int (Doc ann) (LayoutPipeline ann)
     | UndoAnn (LayoutPipeline ann)
-  deriving Typeable
+  deriving (Show, Typeable)
 
 -- | Maximum number of characters that fit in one line. The layout algorithms
 -- will try not to exceed the set limit by inserting line breaks when applicable
@@ -1711,29 +1715,29 @@ layoutSmart = layoutWadlerLeijen
     (FittingPredicate (\pWidth minNestingLevel maxWidth sdoc -> case maxWidth of
         Nothing -> True
         Just w -> fits pWidth minNestingLevel w sdoc ))
-  where
-    -- Search with more lookahead: assuming that nesting roughly corresponds to
-    -- syntactic depth, @fits@ checks that not only the current line fits, but
-    -- the entire syntactic structure being formatted at this level of
-    -- indentation fits. If we were to remove the second case for @SLine@, we
-    -- would check that not only the current structure fits, but also the rest
-    -- of the document, which would be slightly more intelligent but would have
-    -- exponential runtime (and is prohibitively expensive in practice).
-    fits :: PageWidth
-         -> Int -- ^ Minimum nesting level to fit in
-         -> Int -- ^ Width in which to fit the first line
-         -> SimpleDocStream ann
-         -> Bool
-    fits _ _ w _ | w < 0                    = False
-    fits _ _ _ SFail                        = False
-    fits _ _ _ SEmpty                       = True
-    fits pw m w (SChar _ x)                 = fits pw m (w - 1) x
-    fits pw m w (SText l _t x)              = fits pw m (w - l) x
-    fits pw m _ (SLine i x)
-      | m < i, AvailablePerLine cpl _ <- pw = fits pw m (cpl - i) x
-      | otherwise                           = True
-    fits pw m w (SAnnPush _ x)              = fits pw m w x
-    fits pw m w (SAnnPop x)                 = fits pw m w x
+
+-- Search with more lookahead: assuming that nesting roughly corresponds to
+-- syntactic depth, @fits@ checks that not only the current line fits, but
+-- the entire syntactic structure being formatted at this level of
+-- indentation fits. If we were to remove the second case for @SLine@, we
+-- would check that not only the current structure fits, but also the rest
+-- of the document, which would be slightly more intelligent but would have
+-- exponential runtime (and is prohibitively expensive in practice).
+fits :: PageWidth
+     -> Int -- ^ Minimum nesting level to fit in
+     -> Int -- ^ Width in which to fit the first line
+     -> SimpleDocStream ann
+     -> Bool
+fits _ _ w _ | w < 0                    = False
+fits _ _ _ SFail                        = False
+fits _ _ _ SEmpty                       = True
+fits pw m w (SChar _ x)                 = fits pw m (w - 1) x
+fits pw m w (SText l _t x)              = fits pw m (w - l) x
+fits pw m _ (SLine i x)
+  | m < i, AvailablePerLine cpl _ <- pw = fits pw m (cpl - i) x
+  | otherwise                           = True
+fits pw m w (SAnnPush _ x)              = fits pw m w x
+fits pw m w (SAnnPop x)                 = fits pw m w x
 
 -- | The Wadler/Leijen layout algorithm
 layoutWadlerLeijen
@@ -1745,62 +1749,78 @@ layoutWadlerLeijen
     fittingPredicate
     LayoutOptions { layoutPageWidth = pWidth }
     doc
-  = best 0 0 (Cons 0 doc Nil)
+  = best fittingPredicate pWidth 0 0 (Cons 0 doc Nil)
+
+-- * current column >= current nesting level
+-- * current column - current indentaion = number of chars inserted in line
+best
+    :: FittingPredicate ann
+    -> PageWidth
+    -> Int -- Current nesting level
+    -> Int -- Current column, i.e. "where the cursor is"
+    -> LayoutPipeline ann -- Documents remaining to be handled (in order)
+    -> SimpleDocStream ann
+best _  _      !_ !_ Nil           = SEmpty
+best fp pWidth nl cc (UndoAnn ds)  = SAnnPop (best fp pWidth nl cc ds)
+best fp pWidth nl cc (Cons i d ds) = trace' $ case d of
+    Fail            -> SFail
+    Empty           -> best fp pWidth nl cc ds
+    Char c          -> let !cc' = cc+1 in SChar c (best fp pWidth nl cc' ds)
+    Text l t        -> let !cc' = cc+l in SText l t (best fp pWidth nl cc' ds)
+    Line            -> SLine i (best fp pWidth i i ds)
+    FlatAlt x _     -> best fp pWidth nl cc (Cons i x ds)
+    Cat x y         -> best fp pWidth nl cc (Cons i x (Cons i y ds))
+    Nest j x        -> let !ij = i+j in best fp pWidth nl cc (Cons ij x ds)
+    Union x y       -> let x' = best fp pWidth nl cc (Cons i x ds)
+                           y' = best fp pWidth nl cc (Cons i y ds)
+                       in selectNicer fp pWidth nl cc x' y'
+    Column f        -> best fp pWidth nl cc (Cons i (f cc) ds)
+    WithPageWidth f -> best fp pWidth nl cc (Cons i (f pWidth) ds)
+    Nesting f       -> best fp pWidth nl cc (Cons i (f i) ds)
+    Annotated ann x -> SAnnPush ann (best fp pWidth nl cc (Cons i x (UndoAnn ds)))
   where
+    trace' = trace $ "best:"
+                    ++ "\n  nesting level:  " ++ show nl
+                    ++ "\n  current column: " ++ show cc
+                    ++ "\n  i[ndendation]:  " ++ show i
+                    ++ "\n  d:              " ++ show (unsafeCoerce d :: Doc ())
+                    ++ "\n  ds:             " ++ show (unsafeCoerce ds :: LayoutPipeline ())
 
-    -- * current column >= current nesting level
-    -- * current column - current indentaion = number of chars inserted in line
-    best
-        :: Int -- Current nesting level
-        -> Int -- Current column, i.e. "where the cursor is"
-        -> LayoutPipeline ann -- Documents remaining to be handled (in order)
-        -> SimpleDocStream ann
-    best !_ !_ Nil           = SEmpty
-    best nl cc (UndoAnn ds)  = SAnnPop (best nl cc ds)
-    best nl cc (Cons i d ds) = case d of
-        Fail            -> SFail
-        Empty           -> best nl cc ds
-        Char c          -> let !cc' = cc+1 in SChar c (best nl cc' ds)
-        Text l t        -> let !cc' = cc+l in SText l t (best nl cc' ds)
-        Line            -> SLine i (best i i ds)
-        FlatAlt x _     -> best nl cc (Cons i x ds)
-        Cat x y         -> best nl cc (Cons i x (Cons i y ds))
-        Nest j x        -> let !ij = i+j in best nl cc (Cons ij x ds)
-        Union x y       -> let x' = best nl cc (Cons i x ds)
-                               y' = best nl cc (Cons i y ds)
-                           in selectNicer fittingPredicate nl cc x' y'
-        Column f        -> best nl cc (Cons i (f cc) ds)
-        WithPageWidth f -> best nl cc (Cons i (f pWidth) ds)
-        Nesting f       -> best nl cc (Cons i (f i) ds)
-        Annotated ann x -> SAnnPush ann (best nl cc (Cons i x (UndoAnn ds)))
-
-    selectNicer
-        :: FittingPredicate ann
-        -> Int           -- ^ Current nesting level
-        -> Int           -- ^ Current column
-        -> SimpleDocStream ann -- ^ Choice A. Invariant: first lines should not be longer than B's.
-        -> SimpleDocStream ann -- ^ Choice B.
-        -> SimpleDocStream ann -- ^ Choice A if it fits, otherwise B.
-    selectNicer (FittingPredicate fits) lineIndent currentColumn x y
-      | fits pWidth minNestingLevel availableWidth x = x
-      | otherwise = y
-      where
-        minNestingLevel = min lineIndent currentColumn
-        ribbonWidth = case pWidth of
-            AvailablePerLine lineLength ribbonFraction ->
-                (Just . max 0 . min lineLength . round)
-                    (fromIntegral lineLength * ribbonFraction)
+selectNicer
+    :: FittingPredicate ann
+    -> PageWidth
+    -> Int           -- ^ Current nesting level
+    -> Int           -- ^ Current column
+    -> SimpleDocStream ann -- ^ Choice A. Invariant: first lines should not be longer than B's.
+    -> SimpleDocStream ann -- ^ Choice B.
+    -> SimpleDocStream ann -- ^ Choice A if it fits, otherwise B.
+selectNicer (FittingPredicate fits) pWidth lineIndent currentColumn x y
+  | trace' (fits pWidth minNestingLevel availableWidth) x = x
+  | otherwise = y
+  where
+    minNestingLevel = min lineIndent currentColumn
+    ribbonWidth = case pWidth of
+        AvailablePerLine lineLength ribbonFraction ->
+            (Just . max 0 . min lineLength . round)
+                (fromIntegral lineLength * ribbonFraction)
+        Unbounded -> Nothing
+    availableWidth = do
+        columnsLeftInLine <- case pWidth of
+            AvailablePerLine cpl _ribbonFrac -> Just (cpl - currentColumn)
             Unbounded -> Nothing
-        availableWidth = do
-            columnsLeftInLine <- case pWidth of
-                AvailablePerLine cpl _ribbonFrac -> Just (cpl - currentColumn)
-                Unbounded -> Nothing
-            columnsLeftInRibbon <- do
-                li <- Just lineIndent
-                rw <- ribbonWidth
-                cc <- Just currentColumn
-                Just (li + rw - cc)
-            Just (min columnsLeftInLine columnsLeftInRibbon)
+        columnsLeftInRibbon <- do
+            li <- Just lineIndent
+            rw <- ribbonWidth
+            cc <- Just currentColumn
+            Just (li + rw - cc)
+        Just (min columnsLeftInLine columnsLeftInRibbon)
+    trace' = trace $ "selectNicer:"
+              ++ "\n  lineIndent:    " ++ show lineIndent
+              ++ "\n  currentColumn: " ++ show currentColumn
+              ++ "\n  x:             " ++ show (sds x)
+              ++ "\n  y:             " ++ show (sds y)
+              ++ "\n  selected:      " ++ if fits pWidth minNestingLevel availableWidth x then "x" else "y"
+    sds s = unsafeCoerce s :: SimpleDocStream ()
 
 -- | @(layoutCompact x)@ lays out the document @x@ without adding any
 -- indentation. Since no \'pretty\' printing is involved, this layouter is very
@@ -1839,10 +1859,12 @@ layoutCompact doc = scan 0 [doc]
         Nesting f       -> scan col (f 0 : ds)
         Annotated _ x   -> scan col (x:ds)
 
+{-
 -- | @('show' doc)@ prettyprints document @doc@ with 'defaultLayoutOptions',
 -- ignoring all annotations.
 instance Show (Doc ann) where
     showsPrec _ doc = renderShowS (layoutPretty defaultLayoutOptions doc)
+-}
 
 -- | Render a 'SimpleDocStream' to a 'ShowS', useful to write 'Show' instances
 -- based on the prettyprinter.

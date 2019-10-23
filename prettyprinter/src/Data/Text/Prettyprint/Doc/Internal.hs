@@ -1785,7 +1785,7 @@ layoutWadlerLeijen
       | fits pWidth minNestingLevel availableWidth x = x
       | otherwise = y
       where
-        minNestingLevel = min lineIndent currentColumn
+        minNestingLevel = max lineIndent currentColumn
         ribbonWidth = case pWidth of
             AvailablePerLine lineLength ribbonFraction ->
                 (Just . max 0 . min lineLength . round)

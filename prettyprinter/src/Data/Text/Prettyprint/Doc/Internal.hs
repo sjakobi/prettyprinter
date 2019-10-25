@@ -1728,16 +1728,24 @@ fits :: PageWidth
      -> Int -- ^ Width in which to fit the first line
      -> SimpleDocStream ann
      -> Bool
-fits _ _ w _ | w < 0                    = False
-fits _ _ _ SFail                        = False
-fits _ _ _ SEmpty                       = True
-fits pw m w (SChar _ x)                 = fits pw m (w - 1) x
-fits pw m w (SText l _t x)              = fits pw m (w - l) x
-fits pw m _ (SLine i x)
+fits pw m w s = trace' $ fits' pw m w s
+  where
+    trace' =
+      trace $ "fits"
+        ++ "\n  minNesting: " ++ show m
+        ++ "\n  w[idth]   : " ++ show w
+        ++ "\n  sds       : " ++ show (unsafeCoerce s :: SimpleDocStream ())
+
+fits' _ _ w _ | w < 0                    = False
+fits' _ _ _ SFail                        = False
+fits' _ _ _ SEmpty                       = True
+fits' pw m w (SChar _ x)                 = fits pw m (w - 1) x
+fits' pw m w (SText l _t x)              = fits pw m (w - l) x
+fits' pw m _ (SLine i x)
   | m < i, AvailablePerLine cpl _ <- pw = fits pw m (cpl - i) x
   | otherwise                           = True
-fits pw m w (SAnnPush _ x)              = fits pw m w x
-fits pw m w (SAnnPop x)                 = fits pw m w x
+fits' pw m w (SAnnPush _ x)              = fits pw m w x
+fits' pw m w (SAnnPop x)                 = fits pw m w x
 
 -- | The Wadler/Leijen layout algorithm
 layoutWadlerLeijen
@@ -1795,7 +1803,7 @@ selectNicer
     -> SimpleDocStream ann -- ^ Choice B.
     -> SimpleDocStream ann -- ^ Choice A if it fits, otherwise B.
 selectNicer (FittingPredicate fits) pWidth lineIndent currentColumn x y
-  | trace' (fits pWidth minNestingLevel availableWidth) x = x
+  | let b = fits pWidth minNestingLevel availableWidth x in trace' b b = x
   | otherwise = y
   where
     minNestingLevel = min lineIndent currentColumn
@@ -1814,12 +1822,12 @@ selectNicer (FittingPredicate fits) pWidth lineIndent currentColumn x y
             cc <- Just currentColumn
             Just (li + rw - cc)
         Just (min columnsLeftInLine columnsLeftInRibbon)
-    trace' = trace $ "selectNicer:"
+    trace' b = trace $ "selectNicer:"
               ++ "\n  lineIndent:    " ++ show lineIndent
               ++ "\n  currentColumn: " ++ show currentColumn
               ++ "\n  x:             " ++ show (sds x)
               ++ "\n  y:             " ++ show (sds y)
-              ++ "\n  selected:      " ++ if fits pWidth minNestingLevel availableWidth x then "x" else "y"
+              ++ "\n  selected:      " ++ if b then "x" else "y"
     sds s = unsafeCoerce s :: SimpleDocStream ()
 
 -- | @(layoutCompact x)@ lays out the document @x@ without adding any

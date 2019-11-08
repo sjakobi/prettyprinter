@@ -1597,11 +1597,11 @@ instance Traversable SimpleDocStream where
 --
 --   - page width
 --   - minimum nesting level to fit in
---   - width in which to fit the first line; Nothing is unbounded
+--   - width in which to fit the first line
 newtype FittingPredicate ann
   = FittingPredicate (PageWidth
                    -> Int
-                   -> Maybe Int
+                   -> Int
                    -> SimpleDocStream ann
                    -> Bool)
   deriving Typeable
@@ -1664,9 +1664,7 @@ layoutPretty
     -> Doc ann
     -> SimpleDocStream ann
 layoutPretty = layoutWadlerLeijen
-    (FittingPredicate (\_pWidth _minNestingLevel maxWidth sdoc -> case maxWidth of
-        Nothing -> True
-        Just w -> fits w sdoc ))
+    (FittingPredicate (\_pWidth _minNestingLevel maxWidth sdoc -> fits maxWidth sdoc))
   where
     fits :: Int -- ^ Width in which to fit the first line
          -> SimpleDocStream ann
@@ -1729,10 +1727,7 @@ layoutSmart
     :: LayoutOptions
     -> Doc ann
     -> SimpleDocStream ann
-layoutSmart = layoutWadlerLeijen
-    (FittingPredicate (\pWidth minNestingLevel maxWidth sdoc -> case maxWidth of
-        Nothing -> True
-        Just w -> fits pWidth minNestingLevel w sdoc ))
+layoutSmart = layoutWadlerLeijen (FittingPredicate fits)
   where
     -- Search with more lookahead: assuming that nesting roughly corresponds to
     -- syntactic depth, @fits@ checks that not only the current line fits, but
@@ -1764,16 +1759,11 @@ layoutWadlerLeijen
     -> Doc ann
     -> SimpleDocStream ann
 layoutWadlerLeijen
-    fittingPredicate0
+    fittingPredicate
     LayoutOptions { layoutPageWidth = pWidth }
     doc
   = best 0 0 (Cons 0 doc Nil)
   where
-    fittingPredicate = case pWidth of
-        AvailablePerLine{} -> fittingPredicate0
-        Unbounded          -> FittingPredicate
-            (\_pWidth _minNestingLevel _maxWidth sdoc -> not (fails sdoc))
-
     -- * current column >= current nesting level
     -- * current column - current indentaion = number of chars inserted in line
     best
@@ -1807,35 +1797,27 @@ layoutWadlerLeijen
         -> SimpleDocStream ann -- ^ Choice A. Invariant: first lines should not be longer than B's.
         -> SimpleDocStream ann -- ^ Choice B.
         -> SimpleDocStream ann -- ^ Choice A if it fits, otherwise B.
-    selectNicer (FittingPredicate fits) lineIndent currentColumn x y
-      | fits pWidth minNestingLevel availableWidth x = x
-      | otherwise = y
-      where
-        minNestingLevel =
-            -- See https://github.com/quchen/prettyprinter/issues/83.
-            if startsWithLine y
-                -- y might be a (more compact) hanging layout. Let's check x
-                -- thoroughly with the smaller lineIndent.
-                then lineIndent
-                -- y definitely isn't a hanging layout. Let's allow the first
-                -- line of x to be checked on its own and format it consistently
-                -- with subsequent lines with the same indentation.
-                else currentColumn
-        ribbonWidth = case pWidth of
-            AvailablePerLine lineLength ribbonFraction ->
-                (Just . max 0 . min lineLength . round)
-                    (fromIntegral lineLength * ribbonFraction)
-            Unbounded -> Nothing
-        availableWidth = do
-            columnsLeftInLine <- case pWidth of
-                AvailablePerLine cpl _ribbonFrac -> Just (cpl - currentColumn)
-                Unbounded -> Nothing
-            columnsLeftInRibbon <- do
-                li <- Just lineIndent
-                rw <- ribbonWidth
-                cc <- Just currentColumn
-                Just (li + rw - cc)
-            Just (min columnsLeftInLine columnsLeftInRibbon)
+    selectNicer (FittingPredicate fits) lineIndent currentColumn x y = case pWidth of
+        AvailablePerLine lineLength ribbonFraction
+          | fits pWidth minNestingLevel availableWidth x -> x
+          where
+            minNestingLevel =
+                -- See https://github.com/quchen/prettyprinter/issues/83.
+                if startsWithLine y
+                    -- y might be a (more compact) hanging layout. Let's check x
+                    -- thoroughly with the smaller lineIndent.
+                    then lineIndent
+                    -- y definitely isn't a hanging layout. Let's allow the first
+                    -- line of x to be checked on its own and format it consistently
+                    -- with subsequent lines with the same indentation.
+                    else currentColumn
+            availableWidth = min columnsLeftInLine columnsLeftInRibbon
+            columnsLeftInLine = lineLength - currentColumn
+            columnsLeftInRibbon = lineIndent + ribbonWidth - currentColumn
+            ribbonWidth =
+                (max 0 . min lineLength . round) (fromIntegral lineLength * ribbonFraction)
+        Unbounded | not (fails x) -> x
+        _ -> y
 
 -- | @(layoutCompact x)@ lays out the document @x@ without adding any
 -- indentation. Since no \'pretty\' printing is involved, this layouter is very

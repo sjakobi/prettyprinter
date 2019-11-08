@@ -1759,7 +1759,7 @@ layoutWadlerLeijen
     -> Doc ann
     -> SimpleDocStream ann
 layoutWadlerLeijen
-    fittingPredicate
+    (FittingPredicate fits)
     LayoutOptions { layoutPageWidth = pWidth }
     doc
   = best 0 0 (Cons 0 doc Nil)
@@ -1784,20 +1784,19 @@ layoutWadlerLeijen
         Nest j x        -> let !ij = i+j in best nl cc (Cons ij x ds)
         Union x y       -> let x' = best nl cc (Cons i x ds)
                                y' = best nl cc (Cons i y ds)
-                           in selectNicer fittingPredicate nl cc x' y'
+                           in selectNicer nl cc x' y'
         Column f        -> best nl cc (Cons i (f cc) ds)
         WithPageWidth f -> best nl cc (Cons i (f pWidth) ds)
         Nesting f       -> best nl cc (Cons i (f i) ds)
         Annotated ann x -> SAnnPush ann (best nl cc (Cons i x (UndoAnn ds)))
 
     selectNicer
-        :: FittingPredicate ann
-        -> Int           -- ^ Current nesting level
+        :: Int           -- ^ Current nesting level
         -> Int           -- ^ Current column
         -> SimpleDocStream ann -- ^ Choice A. Invariant: first lines should not be longer than B's.
         -> SimpleDocStream ann -- ^ Choice B.
         -> SimpleDocStream ann -- ^ Choice A if it fits, otherwise B.
-    selectNicer (FittingPredicate fits) lineIndent currentColumn x y = case pWidth of
+    selectNicer lineIndent currentColumn x y = case pWidth of
         AvailablePerLine lineLength ribbonFraction
           | fits pWidth minNestingLevel availableWidth x -> x
           where

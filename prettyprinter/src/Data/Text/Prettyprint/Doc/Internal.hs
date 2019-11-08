@@ -1535,15 +1535,16 @@ startsWithLine sds = case sds of
     SAnnPop s    -> startsWithLine s
     _            -> False
 
+-- | Test whether a docstream contains 'SFail'.
 fails :: SimpleDocStream ann -> Bool
 fails sds = case sds of
-    SFail -> True
-    SEmpty -> False
-    SChar _ s -> fails s
-    SText _ _ s -> fails s
-    SLine _ s -> fails s
+    SFail        -> True
+    SEmpty       -> False
+    SChar _ s    -> fails s
+    SText _ _ s  -> fails s
+    SLine _ s    -> fails s
     SAnnPush _ s -> fails s
-    SAnnPop s -> fails s
+    SAnnPop s    -> fails s
 
 
 -- $

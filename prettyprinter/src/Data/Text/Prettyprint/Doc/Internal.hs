@@ -1682,7 +1682,7 @@ layoutPretty = layoutWadlerLeijen
 -- line breaks earlier if the content does not (or will not, rather) fit into
 -- one line.
 --
--- Considre the following python-ish document,
+-- Consider the following python-ish document,
 --
 -- >>> let fun x = hang 2 ("fun(" <> softline' <> x) <> ")"
 -- >>> let doc = (fun . fun . fun . fun . fun) (align (list ["abcdef", "ghijklm"]))

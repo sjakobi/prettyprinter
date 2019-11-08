@@ -1535,6 +1535,16 @@ startsWithLine sds = case sds of
     SAnnPop s    -> startsWithLine s
     _            -> False
 
+fails :: SimpleDocStream ann -> Bool
+fails sds = case sds of
+    SFail -> True
+    SEmpty -> False
+    SChar _ s -> fails s
+    SText _ _ s -> fails s
+    SLine _ s -> fails s
+    SAnnPush _ s -> fails s
+    SAnnPop s -> fails s
+
 
 -- $
 -- >>> import qualified Data.Text.IO as T
@@ -1754,11 +1764,15 @@ layoutWadlerLeijen
     -> Doc ann
     -> SimpleDocStream ann
 layoutWadlerLeijen
-    fittingPredicate
+    fittingPredicate0
     LayoutOptions { layoutPageWidth = pWidth }
     doc
   = best 0 0 (Cons 0 doc Nil)
   where
+    fittingPredicate = case pWidth of
+        AvailablePerLine{} -> fittingPredicate0
+        Unbounded          -> FittingPredicate
+            (\_pWidth _minNestingLevel _maxWidth sdoc -> not (fails sdoc))
 
     -- * current column >= current nesting level
     -- * current column - current indentaion = number of chars inserted in line

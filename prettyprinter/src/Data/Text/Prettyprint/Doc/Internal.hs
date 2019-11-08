@@ -1764,6 +1764,7 @@ layoutWadlerLeijen
     doc
   = best 0 0 (Cons 0 doc Nil)
   where
+
     -- * current column >= current nesting level
     -- * current column - current indentaion = number of chars inserted in line
     best
@@ -1811,10 +1812,12 @@ layoutWadlerLeijen
                     -- with subsequent lines with the same indentation.
                     else currentColumn
             availableWidth = min columnsLeftInLine columnsLeftInRibbon
-            columnsLeftInLine = lineLength - currentColumn
-            columnsLeftInRibbon = lineIndent + ribbonWidth - currentColumn
-            ribbonWidth =
-                (max 0 . min lineLength . round) (fromIntegral lineLength * ribbonFraction)
+              where
+                columnsLeftInLine = lineLength - currentColumn
+                columnsLeftInRibbon = lineIndent + ribbonWidth - currentColumn
+                ribbonWidth =
+                    (max 0 . min lineLength . round)
+                        (fromIntegral lineLength * ribbonFraction)
         Unbounded | not (fails x) -> x
         _ -> y
 

@@ -46,6 +46,7 @@ tests = testGroup "Tests"
         , testProperty "Deep fusion does not change rendering"
                        (fusionDoesNotChangeRendering Deep)
         ]
+    , testProperty "Group" groupIsIdempotent
     , testStripTrailingSpace
     , testGroup "Performance tests"
         [ testCase "Grouping performance"
@@ -104,6 +105,25 @@ fusionDoesNotChangeRendering depth
             , indent 4 (pretty rendered)
             , "Fused:"
             , indent 4 (pretty renderedFused) ]
+
+groupIsIdempotent :: Property
+groupIsIdempotent
+  = forAll document (\doc ->
+    forAll (layouter :: Gen (LayoutOptions -> Doc Int -> SimpleDocStream Int)) (\layouter_ ->
+    forAll arbitrary (\layoutOptions ->
+        let render = renderStrict . layouter_ layoutOptions
+            groupOnce = render (group doc)
+            groupTwice = render (group (group doc))
+        in counterexample (mkCounterexample groupOnce groupTwice)
+                          (groupOnce == groupTwice) )))
+  where
+    mkCounterexample a b
+      = (T.unpack . renderStrict . layoutPretty defaultLayoutOptions . vsep)
+            [ "Group wasn't idempotent!"
+            , "Grouped once:"
+            , indent 4 (pretty a)
+            , "Grouped twice:"
+            , indent 4 (pretty b) ]
 
 layouter :: CoArbitrary ann => Gen (LayoutOptions -> Doc ann -> SimpleDocStream ann)
 layouter = oneof
